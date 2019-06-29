@@ -20,9 +20,10 @@ from reid.utils.serialization import load_checkpoint, save_checkpoint
 from reid.loss import InvNet
 
 
-def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=8):
+def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=8,args=None):
 
-    dataset = DA(data_dir, source, target)
+
+    dataset = DA(data_dir, source, target,args.source_extension,args.target_extension)
 
     normalizer = T.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
@@ -81,9 +82,9 @@ def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=
 
 def main(args):
     # For fast training.
-    # np.random.seed(100)
-    # torch.manual_seed(100)
-    # torch.cuda.manual_seed_all(100)
+    np.random.seed(10000)
+    torch.manual_seed(1000)
+    torch.cuda.manual_seed_all(10000)
     cudnn.benchmark = True
     device = torch.device('cuda:'+ str(args.gpuid))
     torch.cuda.set_device(device)
@@ -100,7 +101,7 @@ def main(args):
     query_loader, gallery_loader = get_data(args.data_dir, args.source,
                                             args.target, args.height,
                                             args.width, args.batch_size,
-                                            args.re, args.workers)
+                                            args.re, args.workers,args)
 
     # Create model
     model = models.create(args.arch, num_features=args.features,
@@ -191,11 +192,13 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Invariance Learning for Domain Adaptive Re-ID")
     # source
-    parser.add_argument('-s', '--source', type=str, default='street12market',
-                        choices=['market', 'duke', 'msmt17', 'sys', 'market2s01', 's012market','street12market'])
+    parser.add_argument('-s', '--source', type=str, default='market',
+                        choices=['market', 'duke', 'msmt17', 'sys', 'market2s01', 's012market','street1','10'])
+    parser.add_argument('--source_extension',type=str,default='jpg',choices=['png','jpg'])
     # target
-    parser.add_argument('-t', '--target', type=str, default='market',
-                        choices=['market', 'duke', 'msmt17','sys', 'market2s01','s012market'])
+    parser.add_argument('-t', '--target', type=str, default='street1',
+                        choices=['market', 'duke', 'msmt17','sys', 'market2s01','s012market','street1','10'])
+    parser.add_argument('--target_extension', type=str, default='png', choices=['png', 'jpg'])
     # imgs setting
     parser.add_argument('-b', '--batch-size', type=int, default=128)
     parser.add_argument('-j', '--workers', type=int, default=8)
@@ -220,17 +223,17 @@ if __name__ == '__main__':
                         help="evaluation only")
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--epochs_decay', type=int, default=40)
-    parser.add_argument('--print_freq', type=int, default=20)
+    parser.add_argument('--print_freq', type=int, default=30)
     # metric learning
     parser.add_argument('--dist_metric', type=str, default='euclidean')
     # misc
     working_dir = osp.dirname(osp.abspath(__file__))
     # parser.add_argument('--data-dir', type=str, metavar='PATH',
     #                     default=osp.join(working_dir, 'data'))
-    parser.add_argument('--data_dir',type=str,default='/ssd4/ltb/datasets/reid/sys01_market')
+    parser.add_argument('--data_dir',type=str,default='/ssd4/ltb/datasets/reid/street1_market')
     # parser.add_argument('--logs_dir', type=str, metavar='PATH',
     #                     default=osp.join(working_dir, 'logs'))
-    parser.add_argument('--logs_dir', type=str, default='/ssd4/ltb/models/reid/ECN/street12market')
+    parser.add_argument('--logs_dir', type=str, default='/ssd4/ltb/models/reid/ECN/street1_market/market2street1')
     parser.add_argument('--output_feature', type=str, default='pool5')
     # random erasing
 
@@ -244,6 +247,6 @@ if __name__ == '__main__':
                         help='number of KNN for neighborhood invariance')
     parser.add_argument('--lmd', type=float, default=0.3,
                         help='weight controls the importance of the source loss and the target loss.')
-    parser.add_argument('--gpuid',type=str,default='0',help='specify the gpuid ,only one gpu can be specified')
+    parser.add_argument('--gpuid',type=str,default='1',help='specify the gpuid ,only one gpu can be specified')
     args = parser.parse_args()
     main(args)

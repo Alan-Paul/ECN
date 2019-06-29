@@ -8,11 +8,13 @@ import re
 
 class DA(object):
 
-    def __init__(self, data_dir, source, target):
+    def __init__(self, data_dir, source, target, source_extension, target_extension):
 
         # source / target image root
         self.source_images_dir = osp.join(data_dir, source)
         self.target_images_dir = osp.join(data_dir, target)
+        self.source_extension = source_extension
+        self.target_extension = target_extension
         # training image dir
         # self.source_train_path = 'bounding_box_train'
         self.source_train_path = 'train'
@@ -42,14 +44,16 @@ class DA(object):
         cam_dict['sys'] = 2
         return cam_dict
 
-    def preprocess(self, images_dir, path, relabel=True):
+    def preprocess(self, images_dir, path, img_extension='jpg', relabel=True):
         pattern = re.compile(r'([-\d]+)_c([-\d]+)')
         all_pids = {}
         ret = []
-        if 'cuhk03' in images_dir or 's012market' in images_dir:
-            fpaths = sorted(glob(osp.join(images_dir, path, '*.png')))
-        else:
-            fpaths = sorted(glob(osp.join(images_dir, path, '*.jpg')))
+        img_extension = '*.' + img_extension
+        fpaths = sorted(glob(osp.join(images_dir,path,img_extension)))
+        # if 'cuhk03' in images_dir or 's012market' in images_dir:
+        #     fpaths = sorted(glob(osp.join(images_dir, path, '*.png')))
+        # else:
+        #     fpaths = sorted(glob(osp.join(images_dir, path, '*.jpg')))
         for fpath in fpaths:
             fname = osp.basename(fpath)
             if 'cuhk03' in images_dir:
@@ -108,13 +112,13 @@ class DA(object):
         return ret, int(len(all_pids))
 
     def load(self):
-        self.source_train, self.num_train_ids = self.sys_preprocess(self.source_images_dir, self.source_train_path)
+        self.source_train, self.num_train_ids = self.preprocess(self.source_images_dir, self.source_train_path,img_extension=self.source_extension)
         # self.source_train, self.num_train_ids = self.preprocess(self.source_images_dir, self.source_train_path)
         # self.target_train, _ = self.preprocess(self.target_images_dir, self.target_train_path)
-        self.gallery, self.num_gallery_ids = self.preprocess(self.target_images_dir, self.gallery_path, False)
+        self.gallery, self.num_gallery_ids = self.preprocess(self.target_images_dir, self.gallery_path,img_extension=self.target_extension, relabel=False)
         # self.gallery, self.num_gallery_ids = self.sys_preprocess(self.target_images_dir, self.gallery_path, False)
         # self.query, self.num_query_ids = self.sys_preprocess(self.target_images_dir, self.query_path, False)
-        self.query, self.num_query_ids = self.preprocess(self.target_images_dir, self.query_path, False)
+        self.query, self.num_query_ids = self.preprocess(self.target_images_dir, self.query_path, img_extension=self.target_extension, relabel=False)
 
         print(self.__class__.__name__, "dataset loaded")
         print("  subset   | # ids | # images")
