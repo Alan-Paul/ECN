@@ -25,7 +25,9 @@ class Preprocessor(object):
         fpath = fname
         if self.root is not None:
             fpath = osp.join(self.root, fname)
-        img = Image.open(fpath).convert('RGB')
+        # img = Image.open(fpath).convert('RGB')
+        img = Image.open(fpath).convert('L')
+        img = Image.merge('RGB', (img, img, img))
         if self.transform is not None:
             img = self.transform(img)
         return img, fname, pid, camid
@@ -57,6 +59,11 @@ class UnsupervisedCamStylePreprocessor(object):
         else:
             if 'msmt' in self.root:
                 fname = fname[:-4] + '_fake_' + str(sel_cam.numpy() + 1) + '.jpg'
+            elif '2market' in self.root or '2market' in self.camstyle_root:
+                fname_list = fname.split('_')
+                p = '_' + fname_list[1] + '_'
+                r = '_' + 'c' + str(sel_cam.numpy() + 1) + '_'
+                fname = fname.replace(p,r)
             else:
                 fname = fname[:-4] + '_fake_' + str(camid + 1) + 'to' + str(sel_cam.numpy() + 1) + '.jpg'
             fpath = osp.join(self.camstyle_root, fname)

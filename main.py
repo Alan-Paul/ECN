@@ -35,6 +35,7 @@ def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=
         T.ToTensor(),
         normalizer,
         T.RandomErasing(EPSILON=re),
+
     ])
 
     test_transformer = T.Compose([
@@ -46,17 +47,22 @@ def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=
     source_train_loader = DataLoader(
         Preprocessor(dataset.source_train, root=osp.join(dataset.source_images_dir, dataset.source_train_path),
                      transform=train_transformer),
-        batch_size=batch_size, num_workers=workers,
-        shuffle=True, pin_memory=True, drop_last=True)
-
-    target_train_loader = DataLoader(
-        UnsupervisedCamStylePreprocessor(dataset.target_train,
-                                         root=osp.join(dataset.target_images_dir, dataset.target_train_path),
-                                         camstyle_root=osp.join(dataset.target_images_dir,
-                                                                dataset.target_train_camstyle_path),
-                                         num_cam=dataset.target_num_cam, transform=train_transformer),
-        batch_size=batch_size, num_workers=workers,
-        shuffle=True, pin_memory=True, drop_last=True)
+        batch_size=batch_size, num_workers=0,
+        shuffle=True, pin_memory=False, drop_last=True)
+    # source_train_loader = DataLoader(
+    #     UnsupervisedCamStylePreprocessor(dataset.source_train, root=osp.join(dataset.source_images_dir, dataset.source_train_path),
+    #                                      camstyle_root=osp.join(dataset.source_images_dir, dataset.source_train_path),
+    #                  transform=train_transformer),
+    #     batch_size=batch_size, num_workers=0,
+    #     shuffle=True, pin_memory=False, drop_last=True)
+    # target_train_loader = DataLoader(
+    #     UnsupervisedCamStylePreprocessor(dataset.target_train,
+    #                                      root=osp.join(dataset.target_images_dir, dataset.target_train_path),
+    #                                      camstyle_root=osp.join(dataset.target_images_dir,
+    #                                                             dataset.target_train_camstyle_path),
+    #                                      num_cam=dataset.target_num_cam, transform=train_transformer),
+    #     batch_size=batch_size, num_workers=workers,
+    #     shuffle=True, pin_memory=True, drop_last=True)
 
     query_loader = DataLoader(
         Preprocessor(dataset.query,
@@ -69,25 +75,28 @@ def get_data(data_dir, source, target, height, width, batch_size, re=0, workers=
                      root=osp.join(dataset.target_images_dir, dataset.gallery_path), transform=test_transformer),
         batch_size=batch_size, num_workers=workers,
         shuffle=False, pin_memory=True)
-
-    return dataset, num_classes, source_train_loader, target_train_loader, query_loader, gallery_loader
+    #print('num_classes : {%s}'.format(num_classes))
+    return dataset, num_classes, source_train_loader, query_loader, gallery_loader
 
 
 def main(args):
     # For fast training.
+    # np.random.seed(100)
+    # torch.manual_seed(100)
+    # torch.cuda.manual_seed_all(100)
     cudnn.benchmark = True
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    device = torch.device('cuda:'+ str(args.gpuid))
+    torch.cuda.set_device(device)
     # Redirect print to both console and log file
     if not args.evaluate:
         sys.stdout = Logger(osp.join(args.logs_dir, 'log.txt'))
-    print('log_dir=', args.logs_dir)
+    print('logs_dir=', args.logs_dir)
 
     # Print logs
     print(args)
 
     # Create data loaders
-    dataset, num_classes, source_train_loader, target_train_loader, \
+    dataset, num_classes, source_train_loader, \
     query_loader, gallery_loader = get_data(args.data_dir, args.source,
                                             args.target, args.height,
                                             args.width, args.batch_size,
@@ -98,31 +107,31 @@ def main(args):
                           dropout=args.dropout, num_classes=num_classes)
 
     # Invariance learning model
-    num_tgt = len(dataset.target_train)
-    model_inv = InvNet(args.features, num_tgt,
-                        beta=args.inv_beta, knn=args.knn,
-                        alpha=args.inv_alpha)
+    # num_tgt = len(dataset.target_train)
+    # model_inv = InvNet(args.features, num_tgt,
+    #                     beta=args.inv_beta, knn=args.knn,
+    #                     alpha=args.inv_alpha)
 
     # Load from checkpoint
     start_epoch = 0
     if args.resume:
         checkpoint = load_checkpoint(args.resume)
         model.load_state_dict(checkpoint['state_dict'])
-        model_inv.load_state_dict(checkpoint['state_dict_inv'])
+        # model_inv.load_state_dict(checkpoint['state_dict_inv'])
         start_epoch = checkpoint['epoch']
         print("=> Start epoch {} "
               .format(start_epoch))
 
     # Set model
-    model = nn.DataParallel(model).to(device)
-    model_inv = model_inv.to(device)
+    model = nn.DataParallel(model,device_ids=[int(args.gpuid)])
+    # model_inv = model_inv.to(device)
 
     # Evaluator
     evaluator = Evaluator(model)
     if args.evaluate:
         print("Test:")
         evaluator.evaluate(query_loader, gallery_loader, dataset.query,
-                           dataset.gallery, args.output_feature)
+                           dataset.gallery, args.print_freq, args.output_feature)
         return
 
     # Optimizer
@@ -142,7 +151,8 @@ def main(args):
                                 nesterov=True)
 
     # Trainer
-    trainer = Trainer(model, model_inv, lmd=args.lmd)
+    # trainer = Trainer(model, '', lmd=args.lmd)
+    trainer = Trainer(model, None, lmd=args.lmd)
 
     # Schedule learning rate
     def adjust_lr(epoch):
@@ -153,33 +163,39 @@ def main(args):
 
     # Start training
     for epoch in range(start_epoch, args.epochs):
+        print(epoch)
         adjust_lr(epoch)
-        trainer.train(epoch, source_train_loader, target_train_loader, optimizer)
+        trainer.sys_train(epoch, source_train_loader, optimizer,print_freq=args.print_freq)
 
         save_checkpoint({
             'state_dict': model.module.state_dict(),
-            'state_dict_inv': model_inv.state_dict(),
+            # 'state_dict_inv': model_inv.state_dict(),
             'epoch': epoch + 1,
         }, fpath=osp.join(args.logs_dir, 'checkpoint.pth.tar'))
 
         print('\n * Finished epoch {:3d} \n'.
               format(epoch))
+        if epoch % 5 == 0:
+            print(' test with epoch {:3d} : ---'.format(epoch))
+            evaluator = Evaluator(model)
+            evaluator.evaluate(query_loader, gallery_loader, dataset.query,
+                           dataset.gallery, args.print_freq, args.output_feature)
 
     # Final test
-    print('Test with best model:')
+    print('Final Test : Testing with best model......')
     evaluator = Evaluator(model)
     evaluator.evaluate(query_loader, gallery_loader, dataset.query,
-                       dataset.gallery, args.output_feature)
+                       dataset.gallery, args.print_freq, args.output_feature)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Invariance Learning for Domain Adaptive Re-ID")
     # source
-    parser.add_argument('-s', '--source', type=str, default='duke',
-                        choices=['market', 'duke', 'msmt17'])
+    parser.add_argument('-s', '--source', type=str, default='street12market',
+                        choices=['market', 'duke', 'msmt17', 'sys', 'market2s01', 's012market','street12market'])
     # target
     parser.add_argument('-t', '--target', type=str, default='market',
-                        choices=['market', 'duke', 'msmt17'])
+                        choices=['market', 'duke', 'msmt17','sys', 'market2s01','s012market'])
     # imgs setting
     parser.add_argument('-b', '--batch-size', type=int, default=128)
     parser.add_argument('-j', '--workers', type=int, default=8)
@@ -197,33 +213,37 @@ if __name__ == '__main__':
                         help="learning rate of new parameters, for ImageNet pretrained"
                              "parameters it is 10 times smaller than this")
     parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--weight-decay', type=float, default=5e-4)
+    parser.add_argument('--weight_decay', type=float, default=5e-4)
     # training configs
     parser.add_argument('--resume', type=str, default='', metavar='PATH')
     parser.add_argument('--evaluate', action='store_true',
                         help="evaluation only")
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--epochs_decay', type=int, default=40)
-    parser.add_argument('--print-freq', type=int, default=1)
+    parser.add_argument('--print_freq', type=int, default=20)
     # metric learning
-    parser.add_argument('--dist-metric', type=str, default='euclidean')
+    parser.add_argument('--dist_metric', type=str, default='euclidean')
     # misc
     working_dir = osp.dirname(osp.abspath(__file__))
-    parser.add_argument('--data-dir', type=str, metavar='PATH',
-                        default=osp.join(working_dir, 'data'))
-    parser.add_argument('--logs-dir', type=str, metavar='PATH',
-                        default=osp.join(working_dir, 'logs'))
+    # parser.add_argument('--data-dir', type=str, metavar='PATH',
+    #                     default=osp.join(working_dir, 'data'))
+    parser.add_argument('--data_dir',type=str,default='/ssd4/ltb/datasets/reid/sys01_market')
+    # parser.add_argument('--logs_dir', type=str, metavar='PATH',
+    #                     default=osp.join(working_dir, 'logs'))
+    parser.add_argument('--logs_dir', type=str, default='/ssd4/ltb/models/reid/ECN/street12market')
     parser.add_argument('--output_feature', type=str, default='pool5')
     # random erasing
+
     parser.add_argument('--re', type=float, default=0.5)
     # Invariance learning
-    parser.add_argument('--inv-alpha', type=float, default=0.01,
+    parser.add_argument('--inv_alpha', type=float, default=0.01,
                         help='update rate for the exemplar memory in invariance learning')
-    parser.add_argument('--inv-beta', type=float, default=0.05,
+    parser.add_argument('--inv_beta', type=float, default=0.05,
                         help='The temperature in invariance learning')
     parser.add_argument('--knn', default=6, type=int,
                         help='number of KNN for neighborhood invariance')
     parser.add_argument('--lmd', type=float, default=0.3,
                         help='weight controls the importance of the source loss and the target loss.')
+    parser.add_argument('--gpuid',type=str,default='0',help='specify the gpuid ,only one gpu can be specified')
     args = parser.parse_args()
     main(args)

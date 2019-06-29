@@ -8,7 +8,8 @@ import numpy as np
 
 from .evaluation_metrics import cmc, mean_ap, map_cmc
 from .utils.meters import AverageMeter
-
+import matplotlib.pyplot as plt
+import matplotlib
 from torch.autograd import Variable
 from .utils import to_torch
 from .utils import to_numpy
@@ -19,11 +20,11 @@ import pdb
 import visdom
 
 
-def extract_cnn_feature(model, inputs, output_feature=None):
+def extract_cnn_feature(model, inputs, opt, output_feature=None):
     model.eval()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda:'+str(opt.gpuid))
     inputs = to_torch(inputs)
-    inputs = inputs.to(device)
+    inputs = inputs.cuda()
     outputs = model(inputs, output_feature)
     outputs = outputs.data.cpu()
     return outputs
@@ -98,6 +99,31 @@ def evaluate_all(distmat, query=None, gallery=None,
               .format(k, all_cmc[k - 1]))
     return
 
+def visualization(dist, query, gallery,query_path, gallery_path, output_dir='/home/ltb/myshare/ECN/data/'):
+    dist = dist.cpu().numpy()
+    indices = np.argsort(dist, axis=1)
+    for q_index in range(50):
+        index = indices[q_index]
+        matplotlib.use('agg')
+        fig = plt.figure(figsize=(30, 10))
+        ax = plt.subplot(2, 6, 1)
+        ax.axis('off')
+        path = osp.join(query_path, query[q_index][0])
+        print(path)
+        ax.set_title(query[q_index][0])
+
+        plt.imshow(plt.imread(path))
+        for i in range(10):
+            if i < 5:
+                ax = plt.subplot(2, 6, i + 2)
+            else:
+                ax = plt.subplot(2, 6, i + 3)
+            ax.axis('off')
+            path = osp.join(gallery_path, gallery[index[i]][0])
+            ax.set_title(gallery[index[i]][0])
+            plt.imshow(plt.imread(path))
+            print(path)
+        fig.savefig(output_dir + str(q_index) + 'g2g')
     # Traditional evaluation
     # Compute mean AP
     # mAP = mean_ap(distmat, query_ids, gallery_ids, query_cams, gallery_cams)
@@ -124,9 +150,10 @@ class Evaluator(object):
     def __init__(self, model):
         super(Evaluator, self).__init__()
         self.model = model
-
-    def evaluate(self, query_loader, gallery_loader, query, gallery, output_feature=None):
-        query_features, _ = extract_features(self.model, query_loader, 1, output_feature)
-        gallery_features, _ = extract_features(self.model, gallery_loader, 1, output_feature)
+    def evaluate(self, query_loader, gallery_loader, query, gallery,  print_freq=1,output_feature=None):
+        query_features, _ = extract_features(self.model, query_loader, print_freq, output_feature)
+        gallery_features, _ = extract_features(self.model, gallery_loader, print_freq, output_feature)
         distmat = pairwise_distance(query_features, gallery_features, query, gallery)
+        # visualization(distmat,query,gallery,query_path='/ssd4/ltb/datasets/reid/sys01_market/market/query',gallery_path='/ssd4/ltb/datasets/reid/sys01_market/market/test')
         return evaluate_all(distmat, query=query, gallery=gallery)
+
